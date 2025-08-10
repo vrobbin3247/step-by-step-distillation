@@ -36,14 +36,26 @@ def eval_equation(equation):
     return answer
 
 
+
+
 def compute_metrics_text(tokenizer):
     def compute_metrics(eval_pred):
         predictions, labels = eval_pred
-        decoded_preds = tokenizer.batch_decode(predictions[0], skip_special_tokens=True)
 
-        labels = np.where(labels[0] != -100, labels[0], tokenizer.pad_token_id)
-        decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+        # If predictions are logits (3D: batch x seq_len x vocab_size), convert to token IDs
+        if isinstance(predictions, np.ndarray) and predictions.ndim == 3:
+            preds_ids = np.argmax(predictions, axis=-1)
+        else:
+            preds_ids = predictions
 
+        # Decode predictions (all batch)
+        decoded_preds = tokenizer.batch_decode(preds_ids, skip_special_tokens=True)
+
+        # Fix labels: replace -100 with pad_token_id (standard ignore index)
+        labels_fixed = np.where(labels != -100, labels, tokenizer.pad_token_id)
+        decoded_labels = tokenizer.batch_decode(labels_fixed, skip_special_tokens=True)
+
+        # Compute accuracy comparing strings
         acc = np.mean(np.array(decoded_preds) == np.array(decoded_labels))
 
         return {'accuracy': acc}
