@@ -16,6 +16,7 @@
 import os
 import shutil
 import logging
+import torch
 
 from transformers import Seq2SeqTrainingArguments, Seq2SeqTrainer
 from transformers import T5ForConditionalGeneration
@@ -31,10 +32,16 @@ def get_config_dir(args):
 
 def train_and_evaluate(args, run, tokenizer, tokenized_datasets, compute_metrics):
     set_seed(run)
+    
+    # Clear GPU cache before loading model
+    torch.cuda.empty_cache()
 
     model = T5ForConditionalGeneration.from_pretrained(args.from_pretrained)
 
-    if args.parallelize:
+    # Enable gradient checkpointing to save memory
+    model.gradient_checkpointing_enable()
+    
+    if args.parallelize and torch.cuda.device_count() > 1:
         model.parallelize()
     
     config_dir = get_config_dir(args)
@@ -71,17 +78,28 @@ def train_and_evaluate(args, run, tokenizer, tokenized_datasets, compute_metrics
         seed=run,
         local_rank=args.local_rank,
         bf16=args.bf16,
+        fp16=args.fp16,  # Add FP16 support
         generation_max_length=args.gen_max_len,
         prediction_loss_only=False,
+        # Memory optimization settings
+        dataloader_drop_last=True,
+        dataloader_num_workers=args.dataloader_num_workers,
+        dataloader_pin_memory=False,  # Disable pin memory to save GPU memory
+        max_grad_norm=1.0,  # Gradient clipping
+        warmup_steps=100,
+        # Evaluation memory optimization
+        eval_accumulation_steps=1,
+        # Save memory by not keeping past predictions
     )
 
     if args.model_type == 'task_prefix':
-        data_collator = TaskPrefixDataCollator(tokenizer=tokenizer, model=model)
+        data_collator = TaskPrefixDataCollator(tokenizer=tokenizer, model=model, 
+                                             pad_to_multiple_of=8 if args.fp16 or args.bf16 else None)
     elif args.model_type == 'standard':
-        data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model)
+        data_collator = DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model,
+                                             pad_to_multiple_of=8 if args.fp16 or args.bf16 else None)
     else:
         raise ValueError
-
 
     trainer_kwargs = {
         'alpha': args.alpha,
@@ -95,7 +113,6 @@ def train_and_evaluate(args, run, tokenizer, tokenized_datasets, compute_metrics
         'compute_metrics': compute_metrics,
     }
     
-
     if args.model_type == 'task_prefix':
         trainer = TaskPrefixTrainer(**trainer_kwargs)
     elif args.model_type == 'standard':
@@ -105,5 +122,10 @@ def train_and_evaluate(args, run, tokenizer, tokenized_datasets, compute_metrics
     else:
         raise ValueError
     
+    # Clear cache before training
+    torch.cuda.empty_cache()
 
     trainer.train()
+    
+    # Clear cache after training
+    torch.cuda.empty_cache()
