@@ -36,32 +36,98 @@ def eval_equation(equation):
     return answer
 
 
+# def compute_metrics_text(tokenizer):
+#     def compute_metrics(eval_pred):
+#         predictions, labels = eval_pred
+#         decoded_preds = tokenizer.batch_decode(predictions[0], skip_special_tokens=True)
+#
+#         labels = np.where(labels[0] != -100, labels[0], tokenizer.pad_token_id)
+#         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+#
+#         acc = np.mean(np.array(decoded_preds) == np.array(decoded_labels))
+#
+#         return {'accuracy': acc}
+#
+#     return compute_metrics
 
+# def compute_metrics_text(tokenizer):
+#     def compute_metrics(eval_pred):
+#         predictions, labels = eval_pred
+#
+#         # Debug: Check shapes
+#         print(f"Predictions shape: {predictions[0].shape}")
+#         print(f"Labels shape: {labels[0].shape}")
+#
+#         # Convert logits to token IDs by taking argmax
+#         if len(predictions[0].shape) == 3:  # (batch_size, seq_len, vocab_size)
+#             preds_ids = predictions[0].argmax(axis=-1)
+#         else:  # Already token IDs
+#             preds_ids = predictions[0]
+#
+#         # Decode predictions
+#         decoded_preds = tokenizer.batch_decode(preds_ids, skip_special_tokens=True)
+#
+#         # Handle labels - replace -100 with pad_token_id
+#         labels_processed = np.where(labels[0] != -100, labels[0], tokenizer.pad_token_id)
+#         decoded_labels = tokenizer.batch_decode(labels_processed, skip_special_tokens=True)
+#
+#         # Calculate accuracy
+#         acc = np.mean(np.array(decoded_preds) == np.array(decoded_labels))
+#
+#         return {'accuracy': acc}
+#
+#     return compute_metrics
 
 def compute_metrics_text(tokenizer):
     def compute_metrics(eval_pred):
         predictions, labels = eval_pred
 
-        # If predictions are logits (3D: batch x seq_len x vocab_size), convert to token IDs
-        if isinstance(predictions, np.ndarray) and predictions.ndim == 3:
-            preds_ids = np.argmax(predictions, axis=-1)
-        else:
-            preds_ids = predictions
+        # Convert logits to token IDs by taking argmax if needed
+        if len(predictions[0].shape) == 3:  # (batch_size, seq_len, vocab_size)
+            preds_ids = predictions[0].argmax(axis=-1)
+        else:  # Already token IDs
+            preds_ids = predictions[0]
 
-        # Decode predictions (all batch)
-        decoded_preds = tokenizer.batch_decode(preds_ids, skip_special_tokens=True)
+        # Convert to numpy array and ensure proper data type
+        preds_ids = np.array(preds_ids, dtype=np.int32)
 
-        # Fix labels: replace -100 with pad_token_id (standard ignore index)
-        labels_fixed = np.where(labels != -100, labels, tokenizer.pad_token_id)
-        decoded_labels = tokenizer.batch_decode(labels_fixed, skip_special_tokens=True)
+        # Clip values to valid token ID range
+        vocab_size = tokenizer.vocab_size
+        preds_ids = np.clip(preds_ids, 0, vocab_size - 1)
 
-        # Compute accuracy comparing strings
+        # Replace any invalid values with pad token
+        preds_ids = np.where(
+            (preds_ids >= 0) & (preds_ids < vocab_size),
+            preds_ids,
+            tokenizer.pad_token_id
+        )
+
+        # Debug: Check for any remaining issues
+        print(f"Pred IDs min: {preds_ids.min()}, max: {preds_ids.max()}")
+        print(f"Vocab size: {vocab_size}")
+
+        # Decode predictions (handle each sequence individually to catch errors)
+        decoded_preds = []
+        for i, pred_seq in enumerate(preds_ids):
+            try:
+                decoded = tokenizer.decode(pred_seq, skip_special_tokens=True)
+                decoded_preds.append(decoded)
+            except Exception as e:
+                print(f"Error decoding sequence {i}: {e}")
+                print(f"Problematic values: {pred_seq}")
+                # Use empty string as fallback
+                decoded_preds.append("")
+
+        # Handle labels - replace -100 with pad_token_id
+        labels_processed = np.where(labels[0] != -100, labels[0], tokenizer.pad_token_id)
+        decoded_labels = tokenizer.batch_decode(labels_processed, skip_special_tokens=True)
+
+        # Calculate accuracy
         acc = np.mean(np.array(decoded_preds) == np.array(decoded_labels))
 
         return {'accuracy': acc}
 
     return compute_metrics
-
 
 def compute_metrics_text_aux(tokenizer):
     def compute_metrics(eval_pred):

@@ -1,72 +1,110 @@
-# Distilling Step-by-Step!
+# Distilling Step-by-Step! (Custom Dataset)
 
-Code for paper [Distilling Step-by-Step! Outperforming Larger Language Models with Less Training Data and Smaller Model Sizes](https://arxiv.org/abs/2305.02301)
+Code for training smaller models using the Distilling Step-by-Step approach on your custom dataset.
 
 ## Environment Setup
 - Setup Conda environment:
-```
+```bash
 conda create --name distill python=3.10.6 -y
 conda activate distill
 conda install -y pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.3 -c pytorch
-pip install git+https://github.com/huggingface/transformers@v4.24.0 datasets sentencepiece protobuf==3.20.* tensorboardX
-```
-- Extract datasets to `datasets/`:
-```
-unzip datasets.zip
+pip install git+https://github.com/huggingface/transformers@v4.24.0 datasets sentencepiece protobuf==3.20.* tensorboardX pandas
 ```
 
-## Command Usages
-#### Args usages
-- `--from_pretrained`: `google/t5-v1_1-small`, `google/t5-v1_1-base`, `google/t5-v1_1-large`, `google/t5-v1_1-xxl`
-- `--dataset`: `esnli`, `anli1`, `cqa`, `svamp`
-- `--label_type`:
-  - `--label_type gt`: Use GT label for training
-  - `--label_type llm`: Use LLM predicted label for training
-- `--alpha`: Task weight for multi-task training. Loss = alpha * label_prediction_loss + (1 - alpha) * rationale_generation_loss
-  - `--alpha 0.5`: recommended
-- `--batch_size`: Batch size
-- `--grad_steps`: Gradient accumulation step
-- `--max_input_length`: Maximum input length
-- `--eval_steps`: How many steps to evaluate the model during training
-- `--max_steps`: Maximum steps for training
-- `--run`: Random seed to use
+## Dataset Preparation
+
+### Step 1: Convert CSV to JSON
+First, convert your CSV dataset to the required JSON format:
+
+```bash
+python data_utils.py --dataset custom --csv_file path/to/your/dataset.csv
+```
+
+This will create:
+- `datasets/custom/custom_train.json` (80% of data)
+- `datasets/custom/custom_test.json` (20% of data)
+
+### Expected CSV Format
+Your CSV should have these columns:
+- `statement`: The input text to classify
+- `classification`: The target label (Pro/Anti/Neutral)  
+- `rationale`: The explanation for the classification
+
+## Training Commands
+
+### Standard Finetuning (Ground Truth Labels Only)
+```bash
+python run.py \
+    --from_pretrained google/t5-v1_1-base \
+    --dataset custom \
+    --model_type standard \
+    --label_type gt \
+    --batch_size 64
+```
+
+### Distilling Step-by-Step (Ground Truth + Rationales)
+```bash
+python run.py \
+    --from_pretrained google/t5-v1_1-base \
+    --dataset custom \
+    --model_type task_prefix \
+    --label_type gt \
+    --llm palm \
+    --alpha 0.5 \
+    --batch_size 64
+```
+
+### Key Arguments
+- `--from_pretrained`: Choose model size
+  - `google/t5-v1_1-small` (77M parameters)
+  - `google/t5-v1_1-base` (220M parameters)
+  - `google/t5-v1_1-large` (770M parameters)
+  - `google/t5-v1_1-xxl` (11B parameters)
 - `--model_type`:
-  - `standard`: Standard finetuning (`--label_type gt`) or distillation (`--label_type llm`)
-  - `task_prefix`: Distilling step-by-step
-- `--parallelize`: Model parallelism
+  - `standard`: Regular finetuning or distillation
+  - `task_prefix`: Distilling step-by-step approach
+- `--label_type`:
+  - `gt`: Use ground truth labels
+  - `llm`: Use LLM-predicted labels (for distillation)
+- `--llm`: Set to `palm` to use rationales from your dataset
+- `--alpha`: Balance between label loss and rationale loss (0.5 recommended)
+- `--subsample`: Use fraction of training data (e.g., 0.1 for 10%)
 
+## Example Workflow
 
-#### Example usages
-- Standard finetuning:
-```python
-python run.py --from_pretrained google/t5-v1_1-base --dataset cqa --model_type standard --label_type gt --batch_size 64
-```
+1. **Prepare your dataset:**
+   ```bash
+   python data_utils.py --dataset custom --csv_file your_data.csv
+   ```
 
+2. **Train with distilling step-by-step:**
+   ```bash
+   python run.py \
+       --from_pretrained google/t5-v1_1-base \
+       --dataset custom \
+       --model_type task_prefix \
+       --label_type gt \
+       --llm palm \
+       --alpha 0.5 \
+       --batch_size 32 \
+       --max_steps 5000
+   ```
 
-- Distilling step-by-step with `GT label` and `PaLM rationale`:
-```python
-python run.py --from_pretrained google/t5-v1_1-base --dataset cqa --model_type task_prefix --label_type gt --llm palm --alpha 0.5 --batch_size 64
-```
+3. **Compare with standard finetuning:**
+   ```bash
+   python run.py \
+       --from_pretrained google/t5-v1_1-base \
+       --dataset custom \
+       --model_type standard \
+       --label_type gt \
+       --batch_size 32 \
+       --max_steps 5000
+   ```
 
+## Dataset Statistics
+Your sample dataset contains:
+- **Input**: Political statements about AADHAR
+- **Labels**: Pro, Anti, Neutral classifications  
+- **Rationales**: Explanations for each classification
 
-- Standard distillation:
-```python
-python run.py --from_pretrained google/t5-v1_1-base --dataset cqa --model_type standard --label_type llm --batch_size 64
-```
-
-
-- Distilling step-by-step with `PaLM label` and `PaLM rationale`:
-```python
-python run.py --from_pretrained google/t5-v1_1-base --dataset cqa --model_type task_prefix --label_type llm --llm palm --alpha 0.5 --batch_size 64
-```
-
-## Cite
-If you find this repository useful, please consider citing:
-```bibtex
-@article{hsieh2023distilling,
-  title={Distilling step-by-step! outperforming larger language models with less training data and smaller model sizes},
-  author={Hsieh, Cheng-Yu and Li, Chun-Liang and Yeh, Chih-Kuan and Nakhost, Hootan and Fujii, Yasuhisa and Ratner, Alexander and Krishna, Ranjay and Lee, Chen-Yu and Pfister, Tomas},
-  journal={arXiv preprint arXiv:2305.02301},
-  year={2023}
-}
-```
+The distilling step-by-step approach will use both the labels and rationales to train a smaller, more efficient model that outperforms standard finetuning approaches.
