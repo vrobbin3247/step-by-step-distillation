@@ -125,7 +125,13 @@ def train_and_evaluate(args, run, tokenizer, tokenized_datasets, compute_metrics
     # Clear cache before training
     torch.cuda.empty_cache()
 
+    print("started training")
     trainer.train()
+    print("completed training")
+
+    # Save using model.save_pretrained to control format
+    trainer.model.save_pretrained("./final_distilled_model", safe_serialization=False)
+    tokenizer.save_pretrained("./final_distilled_model")
     
     # Clear cache after training
     torch.cuda.empty_cache()
